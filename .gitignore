@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.pyc
+data/
+pdf/
+pdfs/
+*.pdf
+data_test/
+demo_data/
+legacy/
+*.zip
+.env
+pdf_run.log
+
+# bulk scrape output -- see "is it legal" note in README before ever
+# committing a compiled dataset like this, even without the PDFs
+abstracts_esmo_congress_2026.csv
+abstracts_esmo_congress_2026.json
+src/esmo_scraper.egg-info/
+*.egg-info/

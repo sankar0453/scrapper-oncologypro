@@ -1,0 +1,327 @@
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>ESMO scraper architecture</title>
+<style>
+  :root {
+    --bg: #f7f6f3;
+    --fg: #1c1d1f;
+    --muted: #6b6f76;
+    --line: #9a9ea6;
+    --panel: #ffffff;
+    --panel-border: #d7d5cf;
+    --accent: #1f6f5c;       /* idempotency / "this is the mechanism" highlight */
+    --accent-soft: #e4efe9;
+    --warn: #9a5b12;         /* gated / blocked path */
+    --warn-soft: #f3e7d6;
+    --external-fill: #efeee9;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a;
+      --fg: #e9eaec;
+      --muted: #9a9ea6;
+      --line: #5a5f68;
+      --panel: #1d2023;
+      --panel-border: #33373d;
+      --accent: #5fd3b3;
+      --accent-soft: #1d322c;
+      --warn: #e0a85b;
+      --warn-soft: #332a1a;
+      --external-fill: #202326;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a;
+    --fg: #e9eaec;
+    --muted: #9a9ea6;
+    --line: #5a5f68;
+    --panel: #1d2023;
+    --panel-border: #33373d;
+    --accent: #5fd3b3;
+    --accent-soft: #1d322c;
+    --warn: #e0a85b;
+    --warn-soft: #332a1a;
+    --external-fill: #202326;
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: Inter, system-ui, sans-serif;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 32px;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  h1 {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 1.3rem;
+    font-weight: 600;
+    margin: 0 0 4px;
+    text-wrap: balance;
+  }
+  .sub { color: var(--muted); font-size: 0.92rem; margin: 0 0 36px; max-width: 65ch; }
+  figure { margin: 0 0 48px; }
+  figcaption {
+    margin-top: 14px;
+    font-size: 0.88rem;
+    color: var(--muted);
+    max-width: 68ch;
+  }
+  figcaption b { color: var(--fg); font-weight: 600; }
+  svg { max-width: 100%; height: auto; display: block; }
+  svg text { font-family: "JetBrains Mono", ui-monospace, monospace; }
+  .cap-title { font-family: Inter, sans-serif; font-size: 0.95rem; font-weight: 600; color: var(--fg); margin: 0 0 6px; }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 14px 22px;
+    font-size: 0.8rem; color: var(--muted);
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--panel-border);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 14px; height: 3px; display: inline-block; border-radius: 2px; }
+</style>
+
+<div class="wrap">
+  <h1>esmo-scraper: architecture &amp; run orchestration</h1>
+  <p class="sub">Two views of the same system: the components and where data flows between them, then what actually happens, step by step, inside one <code>esmo-scraper run</code> invocation &mdash; including the two decisions that make it safe to run twice (idempotency) and safe against gated content (no login, no bypass).</p>
+
+  <figure>
+    <p class="cap-title">Figure 1 &middot; Component architecture &amp; data flow</p>
+    <svg viewBox="0 0 1120 620" role="img" aria-label="CLI builds a RunConfig that configures a KontentClient (with proxy pool and retries) talking to ESMO's public Kontent.ai API; Discovery resolves the conference and hands its ticket code to the URL and content collectors; URL rows and content bodies feed both the PDF renderer and the master metadata store; both write through a single StorageBackend interface that targets local disk or S3.">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g font-size="12" stroke="currentColor" fill="none">
+
+        <!-- CLI -->
+        <rect x="20" y="24" width="170" height="54" rx="8" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="105" y="47" text-anchor="middle" fill="currentColor" font-weight="600">cli.py</text>
+        <text x="105" y="64" text-anchor="middle" fill="var(--muted)" font-size="10.5">run / list-conferences / formats</text>
+
+        <!-- RunConfig -->
+        <rect x="230" y="24" width="190" height="54" rx="8" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="325" y="47" text-anchor="middle" fill="currentColor" font-weight="600">RunConfig</text>
+        <text x="325" y="64" text-anchor="middle" fill="var(--muted)" font-size="10.5">formats, limit, storage, proxy</text>
+
+        <!-- KontentClient -->
+        <rect x="230" y="150" width="190" height="68" rx="8" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="325" y="174" text-anchor="middle" fill="currentColor" font-weight="600">KontentClient</text>
+        <text x="325" y="190" text-anchor="middle" fill="var(--muted)" font-size="10.5">+ ProxyPool</text>
+        <text x="325" y="204" text-anchor="middle" fill="var(--muted)" font-size="10.5">retries, 0.25s pacing</text>
+
+        <!-- External API -->
+        <rect x="480" y="150" width="210" height="68" rx="8" fill="var(--external-fill)" stroke="var(--line)" stroke-dasharray="4 3"/>
+        <text x="585" y="174" text-anchor="middle" fill="currentColor" font-weight="600">Kontent.ai Delivery API</text>
+        <text x="585" y="190" text-anchor="middle" fill="var(--muted)" font-size="10">kontent.cdn.aws.esmo.org</text>
+        <text x="585" y="204" text-anchor="middle" fill="var(--muted)" font-size="10">public, unauthenticated</text>
+
+        <!-- Discovery -->
+        <rect x="740" y="24" width="190" height="54" rx="8" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="835" y="47" text-anchor="middle" fill="currentColor" font-weight="600">discovery</text>
+        <text x="835" y="64" text-anchor="middle" fill="var(--muted)" font-size="10.5">resolve_conference, probe_type_gated</text>
+
+        <!-- Collectors.urls -->
+        <rect x="740" y="150" width="190" height="54" rx="8" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="835" y="173" text-anchor="middle" fill="currentColor" font-weight="600">collectors.urls</text>
+        <text x="835" y="190" text-anchor="middle" fill="var(--muted)" font-size="10.5">collect() &mdash; 1 pass, all formats</text>
+
+        <!-- Collectors.content -->
+        <rect x="740" y="270" width="190" height="54" rx="8" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="835" y="293" text-anchor="middle" fill="currentColor" font-weight="600">collectors.content</text>
+        <text x="835" y="310" text-anchor="middle" fill="var(--muted)" font-size="10.5">fetch_all_bodies()</text>
+
+        <!-- Render.pdf -->
+        <rect x="980" y="210" width="120" height="54" rx="8" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="1040" y="233" text-anchor="middle" fill="currentColor" font-weight="600">render.pdf</text>
+        <text x="1040" y="250" text-anchor="middle" fill="var(--muted)" font-size="10">public only</text>
+
+        <!-- MasterMetadata -->
+        <rect x="740" y="390" width="190" height="60" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+        <text x="835" y="412" text-anchor="middle" fill="var(--accent)" font-weight="700">MasterMetadata</text>
+        <text x="835" y="428" text-anchor="middle" fill="var(--accent)" font-size="10.5">upsert() by content_hash</text>
+        <text x="835" y="441" text-anchor="middle" fill="var(--accent)" font-size="10.5">new / unchanged / updated</text>
+
+        <!-- StorageBackend -->
+        <rect x="980" y="390" width="120" height="54" rx="8" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="1040" y="413" text-anchor="middle" fill="currentColor" font-weight="600">Storage</text>
+        <text x="1040" y="430" text-anchor="middle" fill="var(--muted)" font-size="10">backend interface</text>
+
+        <!-- terminals -->
+        <rect x="900" y="500" width="110" height="46" rx="7" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="955" y="520" text-anchor="middle" fill="currentColor" font-size="11" font-weight="600">local disk</text>
+        <text x="955" y="535" text-anchor="middle" fill="var(--muted)" font-size="9.5">data/{slug}/...</text>
+
+        <rect x="1020" y="500" width="110" height="46" rx="7" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="1075" y="520" text-anchor="middle" fill="currentColor" font-size="11" font-weight="600">S3 bucket</text>
+        <text x="1075" y="535" text-anchor="middle" fill="var(--muted)" font-size="9.5">s3://bucket/prefix/...</text>
+
+        <!-- Logging (cross-cutting, representative) -->
+        <rect x="20" y="150" width="170" height="54" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-dasharray="3 3"/>
+        <text x="105" y="173" text-anchor="middle" fill="var(--muted)" font-weight="600">logging_setup</text>
+        <text x="105" y="190" text-anchor="middle" fill="var(--muted)" font-size="10">run_id-tagged, all stages</text>
+
+        <!-- arrows: control plane -->
+        <path d="M190,51 H230" marker-end="url(#arrow)"/>
+        <path d="M325,78 V150" marker-end="url(#arrow)"/>
+        <path d="M105,78 V150" marker-end="url(#arrow)" stroke-dasharray="3 3"/>
+        <text x="112" y="112" font-size="10" fill="var(--muted)">configures</text>
+
+        <!-- client to external -->
+        <path d="M420,184 H480" marker-end="url(#arrow)"/>
+        <text x="425" y="178" font-size="10" fill="var(--muted)">GET /items (paginated)</text>
+
+        <!-- client used by discovery / collectors -->
+        <path d="M420,165 L740,51" marker-end="url(#arrow)"/>
+        <text x="560" y="98" font-size="10" fill="var(--muted)">used by</text>
+        <path d="M420,184 H740" marker-end="url(#arrow)"/>
+        <path d="M420,205 L740,297" marker-end="url(#arrow)"/>
+
+        <!-- discovery hands ticket_code to collectors -->
+        <path d="M835,78 V150" marker-end="url(#arrow)"/>
+        <text x="845" y="118" font-size="10" fill="var(--muted)">ticket_code</text>
+        <path d="M900,78 C960,140 960,230 900,264" marker-end="url(#arrow)" fill="none"/>
+
+        <!-- urls -> render / master -->
+        <path d="M930,165 L980,225" marker-end="url(#arrow)"/>
+        <text x="932" y="213" font-size="9.5" fill="var(--muted)">rows</text>
+        <path d="M835,204 V390" marker-end="url(#arrow)"/>
+        <text x="845" y="300" font-size="10" fill="var(--muted)">rows to upsert</text>
+
+        <!-- content -> render / master -->
+        <path d="M930,285 C965,265 965,250 980,240" marker-end="url(#arrow)"/>
+        <text x="912" y="268" font-size="9.5" fill="var(--muted)">body html</text>
+        <path d="M860,324 C860,360 850,370 845,390" marker-end="url(#arrow)"/>
+        <text x="862" y="365" font-size="9.5" fill="var(--muted)">content_status</text>
+
+        <!-- render -> storage / master -> storage -->
+        <path d="M1040,264 V390" marker-end="url(#arrow)"/>
+        <text x="1046" y="330" font-size="9.5" fill="var(--muted)">pdf bytes</text>
+        <path d="M930,418 H980" marker-end="url(#arrow)"/>
+        <text x="935" y="410" font-size="9.5" fill="var(--muted)">read/write jsonl</text>
+
+        <!-- storage -> terminals -->
+        <path d="M1020,444 L965,500" marker-end="url(#arrow)"/>
+        <text x="965" y="480" font-size="9.5" fill="var(--muted)">local</text>
+        <path d="M1060,444 L1075,500" marker-end="url(#arrow)"/>
+        <text x="1078" y="480" font-size="9.5" fill="var(--muted)">s3</text>
+
+      </g>
+    </svg>
+    <figcaption>Every call into the Kontent.ai API goes through one client that owns proxy rotation, retry/backoff and request pacing &mdash; discovery and both collectors share it rather than each making raw requests. <b>Collectors.content</b> and <b>MasterMetadata</b> (highlighted) are where the two production behaviours actually live: content-type gating and idempotent re-runs. Everything that writes output goes through one <b>Storage</b> interface, so <code>--storage local</code> vs <code>--storage s3</code> changes nothing upstream of it.</figcaption>
+  </figure>
+
+  <figure>
+    <p class="cap-title">Figure 2 &middot; What one <code>run</code> actually does</p>
+    <svg viewBox="0 0 780 1100" role="img" aria-label="Flow of one run: resolve the conference or abort; collect URL rows for every requested format in a single pass; if rendering or allowing gated content, probe whether each format's listing is access-gated and skip bulk content fetch for gated formats; assign each row a content status; upsert into master metadata by content hash to get new, unchanged or updated; render a PDF only for public, changed-or-new rows, skipping anything unchanged whose PDF already exists; then save the master file and write a run summary.">
+      <defs>
+        <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g font-size="12" stroke="currentColor" fill="none">
+
+        <!-- start pill -->
+        <rect x="210" y="16" width="360" height="46" rx="23" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="390" y="34" text-anchor="middle" fill="currentColor" font-weight="600">esmo-scraper run</text>
+        <text x="390" y="49" text-anchor="middle" fill="var(--muted)" font-size="10">--congress-search ... --formats ...</text>
+
+        <!-- N1 diamond: resolve -->
+        <polygon points="390,95 520,160 390,225 260,160" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="390" y="155" text-anchor="middle" fill="currentColor" font-size="11">resolve_conference():</text>
+        <text x="390" y="170" text-anchor="middle" fill="currentColor" font-size="11">exactly one match?</text>
+
+        <!-- abort terminal -->
+        <rect x="580" y="135" width="170" height="50" rx="8" fill="var(--warn-soft)" stroke="var(--warn)"/>
+        <text x="665" y="155" text-anchor="middle" fill="var(--warn)" font-weight="600" font-size="11">abort</text>
+        <text x="665" y="170" text-anchor="middle" fill="var(--warn)" font-size="10">log error, exit 1</text>
+
+        <!-- N2 collect rows -->
+        <rect x="230" y="260" width="320" height="58" rx="8" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="390" y="284" text-anchor="middle" fill="currentColor" font-weight="600">collect rows for every requested format</text>
+        <text x="390" y="300" text-anchor="middle" fill="var(--muted)" font-size="10">one paginated pass over presentations</text>
+
+        <!-- N3 diamond: render_pdfs or allow_gated -->
+        <polygon points="390,350 540,415 390,480 240,415" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="390" y="410" text-anchor="middle" fill="currentColor" font-size="11">--render-pdfs or</text>
+        <text x="390" y="425" text-anchor="middle" fill="currentColor" font-size="11">--allow-gated set?</text>
+
+        <!-- N4 diamond: listing empty -->
+        <polygon points="390,520 560,590 390,660 220,590" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="390" y="580" text-anchor="middle" fill="currentColor" font-size="11">bulk listing for this</text>
+        <text x="390" y="595" text-anchor="middle" fill="currentColor" font-size="11">item type: total_count = 0?</text>
+        <text x="390" y="610" text-anchor="middle" fill="var(--muted)" font-size="9.5">(probe_type_gated, limit=1)</text>
+
+        <!-- N6 assign status -->
+        <rect x="230" y="700" width="320" height="56" rx="8" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="390" y="723" text-anchor="middle" fill="currentColor" font-weight="600">per row: content_status =</text>
+        <text x="390" y="739" text-anchor="middle" fill="var(--muted)" font-size="10.5">gated &#124; public &#124; not_fetched</text>
+
+        <!-- N7 upsert -->
+        <rect x="200" y="790" width="380" height="64" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+        <text x="390" y="814" text-anchor="middle" fill="var(--accent)" font-weight="700">master.upsert(row) &mdash; compare content_hash</text>
+        <text x="390" y="831" text-anchor="middle" fill="var(--accent)" font-size="10.5">&rarr; status: new / unchanged / updated</text>
+        <text x="390" y="845" text-anchor="middle" fill="var(--accent)" font-size="9.5">(hash excludes run-bookkeeping fields)</text>
+
+        <!-- N8 diamond: should render -->
+        <polygon points="390,900 580,970 390,1040 200,970" fill="var(--panel)" stroke="var(--panel-border)"/>
+        <text x="390" y="960" text-anchor="middle" fill="currentColor" font-size="10.5">public, and NOT (unchanged</text>
+        <text x="390" y="975" text-anchor="middle" fill="currentColor" font-size="10.5">AND pdf already on storage)?</text>
+
+      </g>
+
+      <!-- arrows (separate group so fill:none above doesn't affect markers oddly) -->
+      <g font-size="10.5" stroke="currentColor" fill="none">
+        <path d="M390,62 V95" marker-end="url(#arrow2)"/>
+        <path d="M520,160 H580 V160" marker-end="url(#arrow2)"/>
+        <text x="528" y="152" fill="var(--muted)">no</text>
+        <path d="M390,225 V260" marker-end="url(#arrow2)"/>
+        <text x="398" y="245" fill="var(--muted)">yes</text>
+        <path d="M390,318 V350" marker-end="url(#arrow2)"/>
+        <path d="M390,480 V520" marker-end="url(#arrow2)"/>
+        <text x="398" y="505" fill="var(--muted)">yes</text>
+        <path d="M540,415 C660,460 660,660 450,715" marker-end="url(#arrow2)"/>
+        <text x="610" y="500" fill="var(--muted)">no &mdash; skip content fetch</text>
+        <text x="610" y="513" fill="var(--muted)">(content_status=not_fetched)</text>
+        <path d="M390,660 V700" marker-end="url(#arrow2)"/>
+        <text x="330" y="685" fill="var(--muted)">either branch</text>
+        <path d="M560,590 C610,620 540,670 450,703" marker-end="url(#arrow2)"/>
+        <text x="572" y="640" fill="var(--warn)">yes &rarr; gated</text>
+        <path d="M220,590 C170,650 230,690 320,705" marker-end="url(#arrow2)"/>
+        <text x="140" y="650" fill="var(--muted)">no &rarr; fetch_bodies()</text>
+        <path d="M390,756 V790" marker-end="url(#arrow2)"/>
+        <path d="M390,854 V900" marker-end="url(#arrow2)"/>
+      </g>
+
+      <g font-size="11" stroke="currentColor" fill="none">
+        <!-- N9a render -->
+        <rect x="40" y="1000" width="300" height="56" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+        <!-- N9b skip -->
+        <rect x="440" y="1000" width="300" height="56" rx="8" fill="var(--panel)" stroke="var(--panel-border)"/>
+      </g>
+      <g font-family="JetBrains Mono, ui-monospace, monospace">
+        <text x="190" y="1023" text-anchor="middle" fill="var(--accent)" font-size="11" font-weight="700">render_pdf_bytes()</text>
+        <text x="190" y="1039" text-anchor="middle" fill="var(--accent)" font-size="10">storage.write_bytes(), record path</text>
+        <text x="590" y="1023" text-anchor="middle" fill="currentColor" font-size="11" font-weight="600">skip render</text>
+        <text x="590" y="1039" text-anchor="middle" fill="var(--muted)" font-size="10">gated, non-pdf format, or already rendered</text>
+      </g>
+      <g stroke="currentColor" fill="none" font-size="10.5">
+        <path d="M250,1010 C220,980 210,970 250,960" marker-end="url(#arrow2)"/>
+        <text x="200" y="975" fill="var(--accent)">yes</text>
+        <path d="M530,1010 C560,980 570,970 530,960" marker-end="url(#arrow2)"/>
+        <text x="555" y="975" fill="var(--muted)">no</text>
+      </g>
+    </svg>
+    <figcaption>The two decisions that matter are highlighted: <b>the content-hash compare</b> (what makes a second run against the same conference cheap and safe) and <b>the gating probe</b> (what keeps the tool from ever touching Members/Tickets-only content). A full run repeats this per-row logic across every collected row, then writes <code>master_metadata.jsonl</code> once and <code>run_summary.json</code> once at the end &mdash; not shown separately per row.</figcaption>
+  </figure>
+
+  <div class="legend">
+    <span><span class="swatch" style="background:var(--accent)"></span> idempotency / gating mechanism</span>
+    <span><span class="swatch" style="background:var(--warn)"></span> blocked / gated path</span>
+    <span><span class="swatch" style="background:var(--line);border-style:dashed"></span> external system or cross-cutting concern</span>
+  </div>
+</div>

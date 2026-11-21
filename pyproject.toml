@@ -1,0 +1,18 @@
+[project]
+name = "esmo-scraper"
+version = "1.0.0"
+description = "Dynamic URL/metadata/PDF collector for any conference on oncologypro.esmo.org"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+    "reportlab>=4.0",
+]
+
+[project.optional-dependencies]
+s3 = ["boto3>=1.34"]
+
+[project.scripts]
+esmo-scraper = "esmo_scraper.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
